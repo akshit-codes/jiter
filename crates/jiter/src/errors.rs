@@ -136,6 +136,12 @@ impl JsonError {
         format!("{} at {}", self.error_type, position)
     }
 
+    /// Whether this error means the input ran out, which partial mode accepts.
+    ///
+    /// Only the `Eof*` errors qualify. Running out of input while looking for `,`, `]` or `}`
+    /// is reported as `EofWhileParsingList`/`EofWhileParsingObject`, so `ExpectedListCommaOrEnd`
+    /// and `ExpectedObjectCommaOrEnd` always mean a real syntax error with more input to come,
+    /// and must not be swallowed on their own.
     pub(crate) fn allowed_if_partial(&self) -> bool {
         matches!(
             self.error_type,
@@ -143,8 +149,6 @@ impl JsonError {
                 | JsonErrorType::EofWhileParsingObject
                 | JsonErrorType::EofWhileParsingString
                 | JsonErrorType::EofWhileParsingValue
-                | JsonErrorType::ExpectedListCommaOrEnd
-                | JsonErrorType::ExpectedObjectCommaOrEnd
         )
     }
 }

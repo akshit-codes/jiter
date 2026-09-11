@@ -1,4 +1,5 @@
 use ahash::AHashSet;
+use std::cell::Cell;
 use std::marker::PhantomData;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -93,6 +94,8 @@ struct PythonParser<'j, StringCache, KeyCheck, ParseNumber> {
     recursion_limit: u8,
     allow_inf_nan: bool,
     partial_mode: PartialMode,
+    /// Set once an EOF error has been swallowed in partial mode, see `allow_partial_err`.
+    truncated: Cell<bool>,
 }
 
 impl<StringCache: StringMaybeCache, KeyCheck: MaybeKeyCheck, ParseNumber: MaybeParseNumber>
@@ -114,6 +117,7 @@ impl<StringCache: StringMaybeCache, KeyCheck: MaybeKeyCheck, ParseNumber: MaybeP
             recursion_limit: DEFAULT_RECURSION_LIMIT,
             allow_inf_nan,
             partial_mode,
+            truncated: Cell::new(false),
         };
 
         let peek = slf.parser.peek()?;
@@ -221,11 +225,20 @@ impl<StringCache: StringMaybeCache, KeyCheck: MaybeKeyCheck, ParseNumber: MaybeP
     }
 
     fn allow_partial_err(&self, e: &JsonError) -> bool {
-        if self.partial_mode.is_active() {
-            e.allowed_if_partial()
-        } else {
-            false
+        if !self.partial_mode.is_active() {
+            return false;
         }
+        // Swallowing an EOF error turns it into an empty or partial container, after which the
+        // enclosing container keeps stepping and may trip over whatever unconsumed bytes the
+        // truncated token left behind, e.g. a lone `"`, reporting that as a syntax error.
+        // Everything after an observed EOF is part of the truncation, so once one has been
+        // swallowed, later errors are swallowed too. Before that, only genuine EOF errors are,
+        // so a real syntax error still surfaces.
+        let allowed = self.truncated.get() || e.allowed_if_partial();
+        if allowed {
+            self.truncated.set(true);
+        }
+        allowed
     }
 
     fn check_take_value<'py>(&mut self, py: Python<'py>, peek: Peek) -> JsonResult<Bound<'py, PyAny>> {

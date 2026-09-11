@@ -154,6 +154,32 @@ def test_partial_object_string():
     assert parsed == {'title': 'Pride and Prejudice'}
 
 
+@pytest.mark.parametrize('partial_mode', [False, True, 'off', 'on', 'trailing-strings'])
+@pytest.mark.parametrize(
+    'json,error',
+    [
+        (
+            b'[{"a": "foo", "b": 1}, {"a": "bar": 2}, {"a": "baz", "b": 3}]',
+            'expected `,` or `}` at line 1 column 35',
+        ),
+        (b'[1 2]', 'expected `,` or `]` at line 1 column 4'),
+        (b'{"a": 1 "b": 2}', 'expected `,` or `}` at line 1 column 9'),
+    ],
+)
+def test_partial_rejects_syntax_errors(partial_mode, json, error):
+    # partial mode is for truncated input, not malformed input
+    with pytest.raises(ValueError, match=error):
+        jiter.from_json(json, partial_mode=partial_mode)
+
+
+def test_partial_after_truncated_string_in_array():
+    # the EOF inside the nested key is swallowed; the outer array must not then
+    # report the leftover `"` as a syntax error
+    json = b'["x", {"'
+    assert jiter.from_json(json, partial_mode=True) == ['x', {}]
+    assert jiter.from_json(json, partial_mode='trailing-strings') == ['x', {}]
+
+
 def test_partial_object_string_trailing_strings():
     json = b'{"a": 1, "b": 2, "c": "foo'
     parsed = jiter.from_json(json, partial_mode='trailing-strings')

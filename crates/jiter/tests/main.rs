@@ -1975,6 +1975,51 @@ fn test_value_partial_object() {
 }
 
 #[test]
+fn test_value_partial_rejects_syntax_errors() {
+    // Partial mode is for truncated input; a syntax error with more input still to come is not
+    // a truncation and must still be reported in every mode.
+    let cases: &[(&[u8], JsonErrorType, usize)] = &[
+        (
+            br#"[{"a": "foo", "b": 1}, {"a": "bar": 2}, {"a": "baz"}]"#,
+            JsonErrorType::ExpectedObjectCommaOrEnd,
+            34,
+        ),
+        (br#"[1 2]"#, JsonErrorType::ExpectedListCommaOrEnd, 3),
+        (br#"{"a": 1 "b": 2}"#, JsonErrorType::ExpectedObjectCommaOrEnd, 8),
+    ];
+    for (json, error_type, index) in cases {
+        for mode in [PartialMode::Off, PartialMode::On, PartialMode::TrailingStrings] {
+            let e = JsonValue::parse_with_config(json, false, mode).unwrap_err();
+            assert_eq!(
+                e.error_type,
+                *error_type,
+                "{mode:?} {}",
+                std::str::from_utf8(json).unwrap()
+            );
+            assert_eq!(e.index, *index, "{mode:?}");
+        }
+    }
+}
+
+#[test]
+fn test_value_partial_after_truncated_string_in_array() {
+    // Truncated inside the key of a nested object. The EOF is swallowed, after which the outer
+    // array must not report the leftover `"` as a syntax error.
+    let json_bytes = br#"["x", {""#;
+    for mode in [PartialMode::On, PartialMode::TrailingStrings] {
+        let value = JsonValue::parse_with_config(json_bytes, false, mode).unwrap();
+        assert_eq!(
+            value,
+            JsonValue::Array(Arc::new(vec![
+                JsonValue::Str("x".into()),
+                JsonValue::Object(Arc::new(vec![])),
+            ])),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
 fn test_partial_pass1() {
     let json = read_file("./benches/pass1.json");
     let json_bytes = json.as_bytes();
